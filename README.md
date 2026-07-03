@@ -4,7 +4,7 @@ Eva、Heng 和强尼共用的中文七日菜单。应用会滚动显示从今天
 
 ## 功能
 
-- 三位固定成员使用各自 PIN 登录，共享同一份菜单
+- 固定选择 Eva、Heng 或强尼即可进入，无需密码或用户 Secrets
 - 每餐记录菜品、食材、提议人和备注
 - 每餐独立标记“食材已购买或冰箱已有”
 - 自动生成采购清单，合并重复食材
@@ -32,14 +32,9 @@ Eva、Heng 和强尼共用的中文七日菜单。应用会滚动显示从今天
 1. 打开 [Streamlit Community Cloud](https://share.streamlit.io/)，选择 `Create app`。
 2. 仓库填写 `zixindh/caipu`，分支选择 `main`，入口文件填写 `app.py`。
 3. 打开 `Advanced settings` → `Secrets`。
-4. 粘贴下面配置，并替换所有示例值：
+4. 粘贴下面配置，并替换 Notion Token：
 
 ```toml
-[users]
-Eva = "为Eva设置PIN"
-Heng = "为Heng设置PIN"
-"强尼" = "为强尼设置PIN"
-
 [notion]
 token = "ntn_你的Notion连接密钥"
 parent_page_id = "392a6041f59c80fb8868f369f02a0470"
@@ -47,10 +42,11 @@ parent_page_id = "392a6041f59c80fb8868f369f02a0470"
 
 5. 保存并部署。首次打开会自动初始化 Notion 数据库。
 
-> 不要把真实 Token 或 PIN 提交到 GitHub。Streamlit 官方建议使用应用设置中的 Secrets 保存凭据。
+> 不要把真实 Token 提交到 GitHub。Streamlit 官方建议使用应用设置中的 Secrets 保存凭据。
 
 ## 日常使用
 
+- 在登录页点选 Eva、Heng 或强尼即可进入。
 - 进入后选择日期，再编辑早餐、午餐或晚餐。
 - 点击“保存这一餐”才会写入 Notion。
 - 家人修改后，点击页面右上角“刷新”获取最新版本。

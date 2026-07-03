@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 from datetime import datetime
 from html import escape
 
@@ -120,38 +119,27 @@ def _inject_style() -> None:
 
 
 def _login() -> bool:
-    if st.session_state.get("user") in USERS:
+    if st.session_state.get("user"):
         return True
 
-    user_pins = _secret_section("users")
     st.markdown('<div class="brand">CAIPU · 七日食谱</div>', unsafe_allow_html=True)
     st.title("一起决定，这周吃什么")
     st.markdown(
         '<p class="subtle">选择你的名字，进入共享餐单。</p>',
         unsafe_allow_html=True,
     )
-    if not all(str(user_pins.get(user, "")).strip() for user in USERS):
-        st.warning(
-            "应用尚未完成用户配置。请在 Streamlit Secrets 中设置三位成员的 PIN。"
-        )
-        st.code(
-            '[users]\nEva = "设置一个PIN"\nHeng = "设置一个PIN"\n"强尼" = "设置一个PIN"',
-            language="toml",
-        )
-        return False
 
     with st.form("login", border=False):
         selected = st.segmented_control(
-            "你是谁？", USERS, default=USERS[0], selection_mode="single"
+            "你是谁？",
+            USERS,
+            default=USERS[0],
+            selection_mode="single",
         )
-        pin = st.text_input("PIN", type="password", placeholder="输入你的 PIN")
         submitted = st.form_submit_button("进入餐单", type="primary", width="stretch")
     if submitted:
-        expected = str(user_pins.get(selected, ""))
-        if pin and hmac.compare_digest(pin, expected):
-            st.session_state.user = selected
-            st.rerun()
-        st.error("PIN 不正确，请再试一次。")
+        st.session_state.user = selected
+        st.rerun()
     return False
 
 
