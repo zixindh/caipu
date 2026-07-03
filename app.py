@@ -244,7 +244,8 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
         default=list(labels)[0],
         selection_mode="single",
         label_visibility="collapsed",
-        key="selected-day-label",
+        # A date-specific key resets the selector to the new "today" after midnight.
+        key=f"selected-day-label-{start.isoformat()}",
     )
     selected_day = labels[selected_label]
     st.subheader(full_day_label(selected_day, start))
