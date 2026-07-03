@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 from hashlib import sha256
 from html import escape
 
 import streamlit as st
 
 from caipu.dates import (
-    APP_TIMEZONE,
     day_label,
     full_day_label,
     rolling_days,
@@ -17,7 +16,6 @@ from caipu.dates import (
 from caipu.groceries import grocery_items
 from caipu.history import group_history
 from caipu.menu_table import build_menu_rows, changed_meals, records_from_editor
-from caipu.models import MEAL_SLOTS
 from caipu.storage import NotionMealRepository, StorageError, empty_week
 
 st.set_page_config(
@@ -205,7 +203,6 @@ def _load_meals(repo: NotionMealRepository, start, force: bool = False) -> None:
     meals.update(remote)
     st.session_state.meals = meals
     st.session_state.week_start = start.isoformat()
-    st.session_state.loaded_at = datetime.now(APP_TIMEZONE).strftime("%H:%M")
 
 
 def _load_history(
@@ -227,20 +224,6 @@ def _load_history(
 def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
     days = rolling_days(start)
     meals = st.session_state.meals
-    planned = sum(
-        not meals[f"{day.isoformat()}:{slot.value}"].is_empty
-        for day in days
-        for slot in MEAL_SLOTS
-    )
-    st.markdown(
-        f'<p class="subtle">未来 7 天已安排 {planned}/21 餐 · '
-        f"上次同步 {st.session_state.get('loaded_at', '刚刚')}</p>",
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "直接填写后按 Enter 或点到其他单元格，系统会立即自动保存。"
-        "修改会记在当前登录者名下。"
-    )
     legend = "".join(
         f'<span class="person-badge" style="color:{style["color"]};'
         f'background:{style["soft"]}">{style["dot"]} {name}</span>'
