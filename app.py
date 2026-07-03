@@ -231,7 +231,7 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
         hide_index=True,
         column_order=("日期", "餐次", "菜品", "食材", "已备齐", "提议", "备注"),
         column_config={
-            "日期": st.column_config.TextColumn("日期", width="small", disabled=True),
+            "日期": st.column_config.TextColumn("日期", width=180, disabled=True),
             "餐次": st.column_config.TextColumn("餐次", width="small", disabled=True),
             "菜品": st.column_config.TextColumn(
                 "想吃什么", width="medium", max_chars=200
