@@ -210,7 +210,10 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
         f"上次同步 {st.session_state.get('loaded_at', '刚刚')}</p>",
         unsafe_allow_html=True,
     )
-    st.caption("直接填写菜品和食材，勾选备齐。修改会自动记在当前登录者名下。")
+    st.caption(
+        "直接填写后按 Enter 或点到其他单元格，系统会立即自动保存。"
+        "修改会记在当前登录者名下。"
+    )
     legend = "".join(
         f'<span class="person-badge" style="color:{style["color"]};'
         f'background:{style["soft"]}">{style["dot"]} {name}</span>'
@@ -260,27 +263,23 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
         key=f"menu-table-{start.isoformat()}-{table_version}",
     )
     changes = changed_meals(records_from_editor(edited), meals, user)
-    button_label = f"保存 {len(changes)} 处修改" if changes else "没有需要保存的修改"
-    if st.button(
-        button_label,
-        type="primary",
-        width="stretch",
-        disabled=not changes,
-        key="save-menu-table",
-    ):
+    if changes:
         saved_count = 0
         try:
-            with st.spinner("正在保存修改…"):
+            with st.spinner("正在自动保存…"):
                 for meal in changes:
                     saved = repo.save(meal, user)
                     st.session_state.meals[saved.key] = saved
                     saved_count += 1
             st.session_state.menu_table_version = table_version + 1
             st.session_state.pop("history_range", None)
-            st.toast(f"已保存 {saved_count} 处修改", icon="✓")
+            st.toast("已自动保存", icon="✓")
             st.rerun()
         except StorageError as exc:
-            st.error(f"已保存 {saved_count} 处；其余修改未保存。{exc}")
+            st.error(
+                f"自动保存失败。已完成 {saved_count} 处，未保存的内容仍留在表格中。"
+                f"{exc}"
+            )
 
 
 def _grocery_view() -> None:
