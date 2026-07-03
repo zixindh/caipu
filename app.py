@@ -21,8 +21,8 @@ from caipu.models import MEAL_SLOTS
 from caipu.storage import NotionMealRepository, StorageError, empty_week
 
 st.set_page_config(
-    page_title="七日食谱",
-    page_icon="🍲",
+    page_title="我们的七日餐桌",
+    page_icon="💗",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -73,15 +73,16 @@ def _inject_style() -> None:
         """
         <style>
         :root {
-          --ink: #17201b;
-          --muted: #677169;
-          --line: #e6e9e5;
-          --paper: #fbfcfa;
-          --accent: #176b45;
-          --soft: #edf5f0;
+          --ink: #3b2b31;
+          --muted: #806d74;
+          --line: #f0dfe3;
+          --paper: #fffaf9;
+          --accent: #c95872;
+          --accent-deep: #a93f59;
+          --soft: #fff0f3;
         }
         .stApp { background: var(--paper); color: var(--ink); }
-        [data-testid="stHeader"] { background: rgba(251,252,250,.88); }
+        [data-testid="stHeader"] { background: rgba(255,250,249,.9); }
         [data-testid="stMainBlockContainer"] {
           max-width: 1280px;
           padding-top: 4.75rem;
@@ -97,7 +98,14 @@ def _inject_style() -> None:
           font-size: .82rem; letter-spacing: .12em; color: var(--accent);
           font-weight: 750; margin-bottom: .45rem;
         }
+        .brand-heart {
+          display:inline-block; margin-right:.3rem; color:var(--accent);
+          animation: heart-in .45s ease-out both;
+        }
         .subtle { color: var(--muted); font-size: .92rem; }
+        .login-note {
+          color: var(--muted); font-size: .82rem; margin:.65rem 0 1rem;
+        }
         .people-legend {
           display:flex; gap:.55rem; flex-wrap:wrap; margin:.5rem 0 1rem;
         }
@@ -120,6 +128,14 @@ def _inject_style() -> None:
         .stFormSubmitButton > button[kind="primary"],
         .stButton > button[kind="primary"] {
           background: var(--accent); color: white; border: 0;
+        }
+        .stFormSubmitButton > button[kind="primary"]:hover,
+        .stButton > button[kind="primary"]:hover {
+          background: var(--accent-deep); color: white;
+        }
+        @keyframes heart-in {
+          from { opacity:0; transform:translateY(3px) scale(.8); }
+          to { opacity:1; transform:translateY(0) scale(1); }
         }
         .grocery-row {
           display:flex; justify-content:space-between; align-items:center;
@@ -151,24 +167,28 @@ def _login() -> bool:
     if st.session_state.get("user"):
         return True
 
-    st.markdown('<div class="brand">CAIPU · 七日食谱</div>', unsafe_allow_html=True)
-    st.title("一起决定，这周吃什么")
     st.markdown(
-        '<p class="subtle">选择你的名字，进入共享餐单。</p>',
+        '<div class="brand"><span class="brand-heart">♥</span>我们的七日餐桌</div>',
+        unsafe_allow_html=True,
+    )
+    st.title("今天是谁来写菜单？")
+    st.markdown(
+        '<p class="subtle">为喜欢的人，认真安排每一顿饭。</p>'
+        '<p class="login-note">点一下名字，直接进入</p>',
         unsafe_allow_html=True,
     )
 
-    with st.form("login", border=False):
-        selected = st.segmented_control(
-            "你是谁？",
-            USERS,
-            default=USERS[0],
-            selection_mode="single",
-        )
-        submitted = st.form_submit_button("进入餐单", type="primary", width="stretch")
-    if submitted:
-        st.session_state.user = selected
-        st.rerun()
+    columns = st.columns(len(USERS))
+    for column, user in zip(columns, USERS, strict=True):
+        style = USER_STYLES[user]
+        if column.button(
+            f"{style['dot']} {user}",
+            key=f"login-{user}",
+            type="primary",
+            width="stretch",
+        ):
+            st.session_state.user = user
+            st.rerun()
     return False
 
 
@@ -381,8 +401,11 @@ def main() -> None:
 
     top_left, top_right = st.columns([5, 2], vertical_alignment="bottom")
     with top_left:
-        st.markdown('<div class="brand">CAIPU · 七日食谱</div>', unsafe_allow_html=True)
-        st.title("未来七天，吃得明白")
+        st.markdown(
+            '<div class="brand"><span class="brand-heart">♥</span>我们的七日餐桌</div>',
+            unsafe_allow_html=True,
+        )
+        st.title("未来七天，一起好好吃饭")
     with top_right:
         a, b = st.columns(2)
         if a.button("刷新", width="stretch", help="从 Notion 获取家人的最新修改"):
