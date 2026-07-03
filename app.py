@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+from hashlib import sha256
 from html import escape
 
 import streamlit as st
 
-from caipu.dates import day_label, full_day_label, rolling_days, today_in_china
+from caipu.dates import APP_TIMEZONE, full_day_label, rolling_days, today_in_china
 from caipu.groceries import grocery_items
 from caipu.history import group_history
-from caipu.models import MEAL_SLOTS, Meal
+from caipu.menu_table import build_menu_rows, changed_meals, records_from_editor
+from caipu.models import MEAL_SLOTS
 from caipu.storage import NotionMealRepository, StorageError, empty_week
 
 st.set_page_config(
@@ -20,6 +22,11 @@ st.set_page_config(
 )
 
 USERS = ("Eva", "Heng", "强尼")
+USER_STYLES = {
+    "Eva": {"dot": "🟣", "color": "#8B5CF6", "soft": "#F3EEFF"},
+    "Heng": {"dot": "🔵", "color": "#2F6FED", "soft": "#EDF3FF"},
+    "强尼": {"dot": "🟠", "color": "#D97706", "soft": "#FFF3E5"},
+}
 
 
 def _secret_section(name: str) -> dict:
@@ -45,7 +52,8 @@ def _repository() -> NotionMealRepository | None:
     ).strip() or None
     if not token or not (data_source_id or parent_page_id):
         return None
-    config_key = (token, data_source_id, parent_page_id)
+    token_fingerprint = sha256(token.encode("utf-8")).hexdigest()
+    config_key = (token_fingerprint, data_source_id, parent_page_id)
     if st.session_state.get("_repository_config") != config_key:
         st.session_state._repository = NotionMealRepository(
             token, data_source_id, parent_page_id
@@ -69,8 +77,8 @@ def _inject_style() -> None:
         .stApp { background: var(--paper); color: var(--ink); }
         [data-testid="stHeader"] { background: rgba(251,252,250,.88); }
         [data-testid="stMainBlockContainer"] {
-          max-width: 1080px;
-          padding-top: 2rem;
+          max-width: 1280px;
+          padding-top: 4.75rem;
           padding-bottom: 5rem;
         }
         #MainMenu, footer { visibility: hidden; }
@@ -84,13 +92,14 @@ def _inject_style() -> None:
           font-weight: 750; margin-bottom: .45rem;
         }
         .subtle { color: var(--muted); font-size: .92rem; }
-        .meal-heading {
-          display:flex; align-items:center; justify-content:space-between;
-          border-top: 1px solid var(--line); padding-top: 1.5rem;
-          margin-top: .5rem;
+        .people-legend {
+          display:flex; gap:.55rem; flex-wrap:wrap; margin:.5rem 0 1rem;
         }
-        .meal-heading strong { font-size: 1.18rem; }
-        .meal-heading span { color: var(--muted); font-size: .84rem; }
+        .person-badge {
+          display:inline-flex; align-items:center; gap:.38rem;
+          padding:.28rem .62rem; border-radius:999px;
+          font-size:.8rem; font-weight:650;
+        }
         div[data-testid="stForm"] {
           border: 0; padding: 0 0 1.1rem 0; background: transparent;
         }
@@ -105,11 +114,6 @@ def _inject_style() -> None:
         .stButton > button[kind="primary"] {
           background: var(--accent); color: white; border: 0;
         }
-        div[data-testid="stTextInput"] input,
-        div[data-testid="stTextArea"] textarea {
-          border-radius: 12px; border-color: var(--line); background: white;
-        }
-        .status-ready { color: var(--accent); font-weight: 650; }
         .grocery-row {
           display:flex; justify-content:space-between; align-items:center;
           padding: .85rem .1rem; border-bottom: 1px solid var(--line);
@@ -126,7 +130,7 @@ def _inject_style() -> None:
           line-height: 1.55;
         }
         @media (max-width: 640px) {
-          [data-testid="stMainBlockContainer"] { padding-top: 1.1rem; }
+          [data-testid="stMainBlockContainer"] { padding-top: 4.25rem; }
           h1 { font-size: 2rem !important; }
           .stButton > button { padding-left: .85rem; padding-right: .85rem; }
         }
@@ -174,7 +178,7 @@ def _load_meals(repo: NotionMealRepository, start, force: bool = False) -> None:
     meals.update(remote)
     st.session_state.meals = meals
     st.session_state.week_start = start.isoformat()
-    st.session_state.loaded_at = datetime.now().strftime("%H:%M")
+    st.session_state.loaded_at = datetime.now(APP_TIMEZONE).strftime("%H:%M")
 
 
 def _load_history(
@@ -193,89 +197,8 @@ def _load_history(
     st.session_state.history_range = range_key
 
 
-def _meal_editor(repo: NotionMealRepository, meal: Meal, user: str) -> None:
-    status = "已备齐" if meal.stocked else "待准备"
-    status_class = "status-ready" if meal.stocked else ""
-    st.markdown(
-        f'<div class="meal-heading"><strong>{meal.slot.value}</strong>'
-        f'<span class="{status_class}">{status}</span></div>',
-        unsafe_allow_html=True,
-    )
-    with st.form(f"meal-{meal.key}", border=False):
-        dish = st.text_input(
-            "想吃什么",
-            value=meal.dish,
-            placeholder="例如：番茄炒蛋",
-            key=f"dish-{meal.key}",
-        )
-        ingredients = st.text_area(
-            "需要的食材",
-            value=meal.ingredients,
-            placeholder="番茄 2个、鸡蛋 3个、葱",
-            height=88,
-            key=f"ingredients-{meal.key}",
-            help="用逗号或换行分隔，采购清单会自动汇总。",
-        )
-        left, right = st.columns([1, 1])
-        with left:
-            suggested_by = st.selectbox(
-                "谁的主意",
-                USERS,
-                index=USERS.index(meal.suggested_by)
-                if meal.suggested_by in USERS
-                else USERS.index(user),
-                key=f"suggested-{meal.key}",
-            )
-        with right:
-            stocked = st.toggle(
-                "食材已购买或冰箱已有",
-                value=meal.stocked,
-                key=f"stocked-{meal.key}",
-            )
-        note = st.text_input(
-            "备注（可选）",
-            value=meal.note,
-            placeholder="例如：少辣、提前解冻",
-            key=f"note-{meal.key}",
-        )
-        saved = st.form_submit_button("保存这一餐", type="primary")
-    if saved:
-        updated = Meal(
-            day=meal.day,
-            slot=meal.slot,
-            dish=dish.strip(),
-            ingredients=ingredients.strip(),
-            stocked=stocked,
-            suggested_by=suggested_by,
-            note=note.strip(),
-            page_id=meal.page_id,
-            last_edited_time=meal.last_edited_time,
-        )
-        try:
-            with st.spinner("正在保存…"):
-                updated = repo.save(updated, user)
-            st.session_state.meals[updated.key] = updated
-            st.toast(f"{meal.slot.value}已保存", icon="✓")
-            st.rerun()
-        except StorageError as exc:
-            st.error(str(exc))
-
-
 def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
     days = rolling_days(start)
-    labels = {day_label(day, start): day for day in days}
-    selected_label = st.segmented_control(
-        "选择日期",
-        list(labels),
-        default=list(labels)[0],
-        selection_mode="single",
-        label_visibility="collapsed",
-        # A date-specific key resets the selector to the new "today" after midnight.
-        key=f"selected-day-label-{start.isoformat()}",
-    )
-    selected_day = labels[selected_label]
-    st.subheader(full_day_label(selected_day, start))
-
     meals = st.session_state.meals
     planned = sum(
         not meals[f"{day.isoformat()}:{slot.value}"].is_empty
@@ -287,8 +210,77 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
         f"上次同步 {st.session_state.get('loaded_at', '刚刚')}</p>",
         unsafe_allow_html=True,
     )
-    for slot in MEAL_SLOTS:
-        _meal_editor(repo, meals[f"{selected_day.isoformat()}:{slot.value}"], user)
+    st.caption("直接填写菜品和食材，勾选备齐。修改会自动记在当前登录者名下。")
+    legend = "".join(
+        f'<span class="person-badge" style="color:{style["color"]};'
+        f'background:{style["soft"]}">{style["dot"]} {name}</span>'
+        for name, style in USER_STYLES.items()
+    )
+    st.markdown(f'<div class="people-legend">{legend}</div>', unsafe_allow_html=True)
+
+    labels = {day: full_day_label(day, start) for day in days}
+    person_labels = {
+        name: f"{style['dot']} {name}" for name, style in USER_STYLES.items()
+    }
+    rows = build_menu_rows(meals, days, labels, person_labels)
+    table_version = st.session_state.get("menu_table_version", 0)
+    edited = st.data_editor(
+        rows,
+        width="stretch",
+        height="content",
+        hide_index=True,
+        column_order=("日期", "餐次", "菜品", "食材", "已备齐", "提议", "备注"),
+        column_config={
+            "日期": st.column_config.TextColumn("日期", width="small", disabled=True),
+            "餐次": st.column_config.TextColumn("餐次", width="small", disabled=True),
+            "菜品": st.column_config.TextColumn(
+                "想吃什么", width="medium", max_chars=200
+            ),
+            "食材": st.column_config.TextColumn(
+                "需要的食材",
+                width="large",
+                help="用逗号分隔，采购清单会自动汇总。",
+                max_chars=1000,
+            ),
+            "已备齐": st.column_config.CheckboxColumn(
+                "已备齐",
+                width="small",
+                help="食材已购买或冰箱已有",
+            ),
+            "提议": st.column_config.TextColumn(
+                "提议",
+                width="small",
+                help="根据最后修改者自动标记",
+                disabled=True,
+            ),
+            "备注": st.column_config.TextColumn("备注", width="medium", max_chars=300),
+        },
+        num_rows="fixed",
+        disabled=("日期", "餐次", "提议"),
+        key=f"menu-table-{start.isoformat()}-{table_version}",
+    )
+    changes = changed_meals(records_from_editor(edited), meals, user)
+    button_label = f"保存 {len(changes)} 处修改" if changes else "没有需要保存的修改"
+    if st.button(
+        button_label,
+        type="primary",
+        width="stretch",
+        disabled=not changes,
+        key="save-menu-table",
+    ):
+        saved_count = 0
+        try:
+            with st.spinner("正在保存修改…"):
+                for meal in changes:
+                    saved = repo.save(meal, user)
+                    st.session_state.meals[saved.key] = saved
+                    saved_count += 1
+            st.session_state.menu_table_version = table_version + 1
+            st.session_state.pop("history_range", None)
+            st.toast(f"已保存 {saved_count} 处修改", icon="✓")
+            st.rerun()
+        except StorageError as exc:
+            st.error(f"已保存 {saved_count} 处；其余修改未保存。{exc}")
 
 
 def _grocery_view() -> None:
@@ -344,7 +336,9 @@ def _history_view(repo: NotionMealRepository, today) -> None:
                         ingredients = escape(meal.ingredients).replace("\n", "、")
                         details.append(f"食材：{ingredients}")
                     if meal.suggested_by:
-                        details.append(f"提议：{escape(meal.suggested_by)}")
+                        person = USER_STYLES.get(meal.suggested_by, {})
+                        dot = person.get("dot", "●")
+                        details.append(f"提议：{dot} {escape(meal.suggested_by)}")
                     if meal.note:
                         details.append(f"备注：{escape(meal.note)}")
                     detail_html = " · ".join(details) or "没有补充信息"
@@ -395,7 +389,8 @@ def main() -> None:
                 st.rerun()
             except StorageError as exc:
                 st.error(str(exc))
-        if b.button(user, width="stretch", help="点击退出"):
+        user_dot = USER_STYLES[user]["dot"]
+        if b.button(f"{user_dot} {user}", width="stretch", help="点击退出"):
             st.session_state.clear()
             st.rerun()
 
