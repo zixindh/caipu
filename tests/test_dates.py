@@ -1,11 +1,17 @@
 import unittest
 from datetime import date, timedelta
 
-from caipu.dates import rolling_days
+from caipu.dates import day_label, rolling_days
 from caipu.storage import empty_week
 
 
 class RollingWindowTests(unittest.TestCase):
+    def test_table_day_label_is_compact_for_mobile(self):
+        today = date(2026, 7, 3)
+
+        self.assertEqual(day_label(today, today), "今天 7/3")
+        self.assertEqual(day_label(date(2026, 7, 4), today), "周六 7/4")
+
     def test_window_always_contains_today_and_six_following_days(self):
         today = date(2026, 7, 3)
         days = rolling_days(today)

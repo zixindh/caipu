@@ -19,7 +19,7 @@ def rolling_days(start: date, count: int = 7) -> list[date]:
 
 def day_label(day: date, today: date) -> str:
     prefix = "今天" if day == today else f"周{WEEKDAYS[day.weekday()]}"
-    return f"{prefix}\n{day.month}/{day.day}"
+    return f"{prefix} {day.month}/{day.day}"
 
 
 def full_day_label(day: date, today: date) -> str:

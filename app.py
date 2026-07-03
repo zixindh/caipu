@@ -7,7 +7,13 @@ from html import escape
 
 import streamlit as st
 
-from caipu.dates import APP_TIMEZONE, full_day_label, rolling_days, today_in_china
+from caipu.dates import (
+    APP_TIMEZONE,
+    day_label,
+    full_day_label,
+    rolling_days,
+    today_in_china,
+)
 from caipu.groceries import grocery_items
 from caipu.history import group_history
 from caipu.menu_table import build_menu_rows, changed_meals, records_from_editor
@@ -106,6 +112,7 @@ def _inject_style() -> None:
         div[data-baseweb="segmented-control"] {
           background: #f0f2ef; border-radius: 14px; padding: 4px;
         }
+        div[data-testid="stDataFrame"] { font-size: .82rem; }
         .stButton > button, .stFormSubmitButton > button {
           min-height: 2.8rem; border-radius: 999px; font-weight: 650;
           border-color: var(--line);
@@ -221,7 +228,7 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
     )
     st.markdown(f'<div class="people-legend">{legend}</div>', unsafe_allow_html=True)
 
-    labels = {day: full_day_label(day, start) for day in days}
+    labels = {day: day_label(day, start) for day in days}
     person_labels = {
         name: f"{style['dot']} {name}" for name, style in USER_STYLES.items()
     }
@@ -231,23 +238,22 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
         rows,
         width="stretch",
         height="content",
+        row_height=68,
         hide_index=True,
         column_order=("日期", "餐次", "菜品", "食材", "已备齐", "提议", "备注"),
         column_config={
-            "日期": st.column_config.TextColumn("日期", width=180, disabled=True),
-            "餐次": st.column_config.TextColumn("餐次", width="small", disabled=True),
-            "菜品": st.column_config.TextColumn(
-                "想吃什么", width="medium", max_chars=200
-            ),
+            "日期": st.column_config.TextColumn("日期", width=None, disabled=True),
+            "餐次": st.column_config.TextColumn("餐次", width=58, disabled=True),
+            "菜品": st.column_config.TextColumn("想吃什么", width=110, max_chars=200),
             "食材": st.column_config.TextColumn(
                 "需要的食材",
-                width="large",
+                width=160,
                 help="用逗号分隔，采购清单会自动汇总。",
                 max_chars=1000,
             ),
             "已备齐": st.column_config.CheckboxColumn(
                 "已备齐",
-                width="small",
+                width=70,
                 help="食材已购买或冰箱已有",
             ),
             "提议": st.column_config.TextColumn(
