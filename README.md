@@ -11,38 +11,23 @@ Eva、Heng 和强尼共用的中文七日菜单。应用会滚动显示从今天
 - 只有保存和手动刷新时访问 Notion，减少等待和界面卡顿
 - 手机和电脑都可使用
 
-## 第一次设置
-
-### 1. 在 Notion 创建连接
-
-1. 打开 [Notion Integrations](https://www.notion.so/profile/integrations)。
-2. 新建一个内部连接，例如命名为 `Caipu`。
-3. 打开连接的权限设置，确认启用读取、插入和更新内容。
-4. 复制内部集成密钥（通常以 `ntn_` 开头）。
-
-### 2. 准备一个 Notion 页面
-
-1. 打开已经准备好的 [Food 页面](https://app.notion.com/p/Food-392a6041f59c80fb8868f369f02a0470)。
-2. 点击页面右上角 `•••`，选择 `连接` 或 `Add connections`，加入刚创建的 `Caipu` 连接。
-
-首次启动时，应用会在这个页面下自动创建 `七日餐单 · Caipu` 数据库和全部字段，不需要手工建表。
-
-### 3. 部署到 Streamlit Community Cloud
+## 部署到 Streamlit Community Cloud
 
 1. 打开 [Streamlit Community Cloud](https://share.streamlit.io/)，选择 `Create app`。
 2. 仓库填写 `zixindh/caipu`，分支选择 `main`，入口文件填写 `app.py`。
 3. 打开 `Advanced settings` → `Secrets`。
-4. 粘贴下面配置，并替换 Notion Token：
+4. 粘贴下面两个环境变量，并替换现有 Notion Token：
 
 ```toml
-[notion]
-token = "ntn_你的Notion连接密钥"
-parent_page_id = "392a6041f59c80fb8868f369f02a0470"
+NOTION_TOKEN = "ntn_你的现有Notion API密钥"
+NOTION_PAGE_ID = "392a6041f59c80fb8868f369f02a0470"
 ```
 
-5. 保存并部署。首次打开会自动初始化 Notion 数据库。
+5. 保存并部署。
 
 > 不要把真实 Token 提交到 GitHub。Streamlit 官方建议使用应用设置中的 Secrets 保存凭据。
+
+仅需这两个变量，不需要再编辑 Food 页面或手工创建数据库。应用首次打开时会在指定页面下自动找到或创建 `七日餐单 · Caipu` 数据库和全部字段。
 
 ## 日常使用
 

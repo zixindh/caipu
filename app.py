@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from html import escape
 
@@ -18,7 +19,6 @@ st.set_page_config(
 )
 
 USERS = ("Eva", "Heng", "强尼")
-DEFAULT_PARENT_PAGE_ID = "392a6041f59c80fb8868f369f02a0470"
 
 
 def _secret_section(name: str) -> dict:
@@ -31,17 +31,25 @@ def _secret_section(name: str) -> dict:
 
 def _repository() -> NotionMealRepository | None:
     notion = _secret_section("notion")
-    token = str(notion.get("token", "")).strip()
-    data_source_id = str(notion.get("data_source_id", "")).strip() or None
+    token = (
+        os.getenv("NOTION_TOKEN")
+        or os.getenv("NOTION_API_KEY")
+        or str(notion.get("token", ""))
+    ).strip()
+    data_source_id = (
+        os.getenv("NOTION_DATA_SOURCE_ID") or str(notion.get("data_source_id", ""))
+    ).strip() or None
     parent_page_id = (
-        str(notion.get("parent_page_id", "")).strip() or DEFAULT_PARENT_PAGE_ID
-    )
+        os.getenv("NOTION_PAGE_ID") or str(notion.get("parent_page_id", ""))
+    ).strip() or None
     if not token or not (data_source_id or parent_page_id):
         return None
-    if "_repository" not in st.session_state:
+    config_key = (token, data_source_id, parent_page_id)
+    if st.session_state.get("_repository_config") != config_key:
         st.session_state._repository = NotionMealRepository(
             token, data_source_id, parent_page_id
         )
+        st.session_state._repository_config = config_key
     return st.session_state._repository
 
 
@@ -287,7 +295,7 @@ def main() -> None:
 
     repo = _repository()
     if repo is None:
-        st.error("应用尚未连接 Notion。请按照 README 配置 Streamlit Secrets。")
+        st.error("应用尚未连接 Notion。请设置 NOTION_TOKEN 和 NOTION_PAGE_ID。")
         return
 
     user = st.session_state.user
@@ -297,7 +305,7 @@ def main() -> None:
             _load_meals(repo, today)
     except (StorageError, ValueError) as exc:
         st.error(str(exc))
-        st.info("请检查 Streamlit Secrets 中的 Notion 配置，然后重新启动应用。")
+        st.info("请检查 NOTION_TOKEN 和 NOTION_PAGE_ID，然后重新启动应用。")
         return
 
     top_left, top_right = st.columns([5, 2], vertical_alignment="bottom")
