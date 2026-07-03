@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 
 import streamlit as st
 
 from caipu.dates import day_label, full_day_label, rolling_days, today_in_china
 from caipu.groceries import grocery_items
+from caipu.history import group_history
 from caipu.models import MEAL_SLOTS, Meal
 from caipu.storage import NotionMealRepository, StorageError, empty_week
 
@@ -115,6 +116,15 @@ def _inject_style() -> None:
         }
         .grocery-row b { font-weight: 620; }
         .grocery-row span { color: var(--muted); font-size: .86rem; }
+        .history-meal {
+          padding: .85rem .1rem; border-bottom: 1px solid var(--line);
+        }
+        .history-meal:last-child { border-bottom: 0; }
+        .history-meal strong { font-size: 1rem; font-weight: 650; }
+        .history-meal p {
+          margin: .28rem 0 0; color: var(--muted); font-size: .88rem;
+          line-height: 1.55;
+        }
         @media (max-width: 640px) {
           [data-testid="stMainBlockContainer"] { padding-top: 1.1rem; }
           h1 { font-size: 2rem !important; }
@@ -165,6 +175,22 @@ def _load_meals(repo: NotionMealRepository, start, force: bool = False) -> None:
     st.session_state.meals = meals
     st.session_state.week_start = start.isoformat()
     st.session_state.loaded_at = datetime.now().strftime("%H:%M")
+
+
+def _load_history(
+    repo: NotionMealRepository, today, days: int, force: bool = False
+) -> None:
+    range_key = f"{today.isoformat()}:{days}"
+    if (
+        not force
+        and st.session_state.get("history_range") == range_key
+        and "history_meals" in st.session_state
+    ):
+        return
+    start = today - timedelta(days=days)
+    end = today - timedelta(days=1)
+    st.session_state.history_meals = repo.load_week(start, end)
+    st.session_state.history_range = range_key
 
 
 def _meal_editor(repo: NotionMealRepository, meal: Meal, user: str) -> None:
@@ -289,6 +315,51 @@ def _grocery_view() -> None:
         )
 
 
+def _history_view(repo: NotionMealRepository, today) -> None:
+    days = st.session_state.get("history_days", 30)
+    st.subheader("往期灵感")
+    st.markdown(
+        f'<p class="subtle">最近 {days} 天 · 只显示填写过的餐次，旧菜单不会被修改。</p>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        with st.spinner("正在翻找往期菜单…"):
+            _load_history(repo, today, days)
+    except StorageError as exc:
+        st.error(str(exc))
+        return
+
+    grouped = group_history(st.session_state.history_meals.values())
+    if not grouped:
+        st.info("还没有往期菜单。使用几天后，这里会自动积累灵感。")
+    else:
+        for index, (day, meals) in enumerate(grouped):
+            label = f"{full_day_label(day, today)} · {len(meals)} 餐"
+            with st.expander(label, expanded=index == 0):
+                for meal in meals:
+                    dish = escape(meal.dish or "未命名菜品")
+                    details = []
+                    if meal.ingredients:
+                        ingredients = escape(meal.ingredients).replace("\n", "、")
+                        details.append(f"食材：{ingredients}")
+                    if meal.suggested_by:
+                        details.append(f"提议：{escape(meal.suggested_by)}")
+                    if meal.note:
+                        details.append(f"备注：{escape(meal.note)}")
+                    detail_html = " · ".join(details) or "没有补充信息"
+                    st.markdown(
+                        f'<div class="history-meal"><strong>'
+                        f"{meal.slot.value} · {dish}</strong>"
+                        f"<p>{detail_html}</p></div>",
+                        unsafe_allow_html=True,
+                    )
+
+    if st.button("再看前 30 天", width="stretch"):
+        st.session_state.history_days = days + 30
+        st.rerun()
+
+
 def main() -> None:
     _inject_style()
     if not _login():
@@ -319,6 +390,7 @@ def main() -> None:
             try:
                 with st.spinner("正在同步…"):
                     _load_meals(repo, today, force=True)
+                    st.session_state.pop("history_range", None)
                 st.toast("已获取最新餐单", icon="✓")
                 st.rerun()
             except StorageError as exc:
@@ -329,15 +401,17 @@ def main() -> None:
 
     section = st.segmented_control(
         "页面",
-        ("餐单", "采购清单"),
-        default="餐单",
+        ("本周餐单", "往期灵感", "采购清单"),
+        default="本周餐单",
         selection_mode="single",
         label_visibility="collapsed",
         key="main-section",
     )
     st.write("")
-    if section == "餐单":
+    if section == "本周餐单":
         _menu_view(repo, today, user)
+    elif section == "往期灵感":
+        _history_view(repo, today)
     else:
         _grocery_view()
 
