@@ -233,6 +233,76 @@ class NotionMealRepository:
             last_edited_time=response.get("last_edited_time"),
         )
 
+    def update_learned_dish(
+        self,
+        dish: LearnedDish,
+        *,
+        name: str,
+        ingredients: str,
+        editor: str,
+        image_bytes: bytes | None = None,
+        filename: str = "",
+        content_type: str = "",
+    ) -> LearnedDish:
+        if not dish.page_id:
+            raise ValueError("这道菜缺少 Notion 页面 ID，请刷新后重试。")
+
+        name = name.strip()
+        ingredients = ingredients.strip()
+        if not name:
+            raise ValueError("请填写菜名。")
+
+        if name.casefold() != dish.name.casefold():
+            existing_page_id = self._find_learned_dish_page(name)
+            if existing_page_id and _clean_id(existing_page_id) != _clean_id(
+                dish.page_id
+            ):
+                raise ValueError("已经有一道同名的菜，请换一个名字。")
+
+        properties: dict[str, Any] = {
+            "餐次": {"title": [_text(f"已学会 · {name}")]},
+            "菜品": {"rich_text": _rich_text(name)},
+            "食材": {"rich_text": _rich_text(ingredients)},
+            LEARNED_DISH_FLAG: {"checkbox": True},
+            "更新者": {"rich_text": [_text(editor)]},
+        }
+
+        if image_bytes is not None:
+            content_type = content_type.lower().strip()
+            if not image_bytes:
+                raise ValueError("新照片是空的，请重新选择。")
+            if len(image_bytes) > MAX_DISH_IMAGE_BYTES:
+                raise ValueError("照片不能超过 5 MB。")
+            if content_type not in ALLOWED_DISH_IMAGE_TYPES:
+                raise ValueError("照片仅支持 JPG、PNG 或 WebP。")
+            upload_id = self._upload_file(
+                image_bytes=image_bytes,
+                filename=filename,
+                content_type=content_type,
+            )
+            properties[LEARNED_DISH_IMAGE] = {
+                "files": [
+                    {
+                        "type": "file_upload",
+                        "file_upload": {"id": upload_id},
+                    }
+                ]
+            }
+
+        response = self._request(
+            "PATCH",
+            f"/pages/{dish.page_id}",
+            json={"properties": properties},
+        )
+        return LearnedDish(
+            name=name,
+            ingredients=ingredients,
+            image_url=dish.image_url,
+            added_by=editor,
+            page_id=response["id"],
+            last_edited_time=response.get("last_edited_time"),
+        )
+
     def _ensure_learned_dish_schema(self) -> str:
         source_id = self.data_source_id or self.ensure_ready()
         source = self._request("GET", f"/data_sources/{source_id}")

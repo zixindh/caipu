@@ -149,6 +149,18 @@ def _inject_style() -> None:
           border-radius: 18px; aspect-ratio: 4 / 3; object-fit: cover;
           animation: dish-in .28s ease-out both;
         }
+        .dish-preview-copy { padding:.15rem 0; }
+        .dish-preview-copy strong {
+          display:block; font-size:1.15rem; line-height:1.35; margin-bottom:.45rem;
+        }
+        .dish-preview-copy p {
+          color:var(--muted); font-size:.88rem; line-height:1.5; margin:0;
+          display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+          overflow:hidden;
+        }
+        .st-key-learned-dish-preview div[data-testid="stImage"] img {
+          aspect-ratio:1 / 1; max-height:220px;
+        }
         div[data-testid="stVerticalBlockBorderWrapper"] {
           border-radius: 22px; overflow: hidden;
           transition: transform .18s ease, box-shadow .18s ease;
@@ -177,9 +189,35 @@ def _inject_style() -> None:
           line-height: 1.55;
         }
         @media (max-width: 640px) {
-          [data-testid="stMainBlockContainer"] { padding-top: 4.25rem; }
-          h1 { font-size: 2rem !important; }
-          .stButton > button { padding-left: .85rem; padding-right: .85rem; }
+          [data-testid="stMainBlockContainer"] {
+            padding:3.35rem .8rem 2.5rem;
+          }
+          h1 { font-size:1.55rem !important; line-height:1.18 !important; }
+          h2 { font-size:1.3rem !important; }
+          h3 { font-size:1.08rem !important; }
+          .brand { margin-bottom:.2rem; }
+          .subtle { font-size:.84rem; }
+          .people-legend { gap:.35rem; margin:.25rem 0 .6rem; }
+          .person-badge { padding:.2rem .48rem; font-size:.74rem; }
+          .stButton > button, .stFormSubmitButton > button {
+            min-height:2.55rem; padding-left:.72rem; padding-right:.72rem;
+          }
+          .st-key-learned-dish-browser [data-testid="stVerticalBlock"] {
+            gap:.65rem;
+          }
+          .st-key-learned-dish-preview [data-testid="stHorizontalBlock"] {
+            gap:.65rem;
+          }
+          .st-key-learned-dish-preview [data-testid="stColumn"] {
+            min-width:0;
+          }
+          .st-key-learned-dish-preview div[data-testid="stImage"] img {
+            border-radius:14px; max-height:145px;
+          }
+          .dish-preview-copy strong { font-size:1rem; margin-bottom:.25rem; }
+          .dish-preview-copy p {
+            font-size:.8rem; line-height:1.4; -webkit-line-clamp:3;
+          }
         }
         </style>
         """,
@@ -275,7 +313,7 @@ def _order_learned_dish(
     day_count: int,
 ) -> None:
     if dish.image_url:
-        st.image(dish.image_url, width="stretch")
+        st.image(dish.image_url, width=220)
     st.subheader(dish.name)
     if dish.ingredients:
         st.caption(f"常用食材：{dish.ingredients}")
@@ -313,6 +351,54 @@ def _order_learned_dish(
             st.rerun()
         except StorageError as exc:
             st.error(str(exc))
+
+
+@st.dialog("编辑这道菜")
+def _edit_learned_dish(
+    repo: NotionMealRepository,
+    user: str,
+    dish: LearnedDish,
+) -> None:
+    if dish.image_url:
+        st.image(dish.image_url, width=140)
+
+    with st.form(f"edit-learned-dish-{dish.page_id}"):
+        name = st.text_input("菜名", value=dish.name, max_chars=200)
+        ingredients = st.text_input(
+            "常用食材（可选）",
+            value=dish.ingredients,
+            max_chars=1000,
+            placeholder="例如：番茄、鸡蛋、葱",
+        )
+        photo = st.file_uploader(
+            "更换照片（可选）",
+            type=("jpg", "jpeg", "png", "webp"),
+            accept_multiple_files=False,
+            help="不选择就保留现在的照片；最大 5 MB。",
+        )
+        submitted = st.form_submit_button(
+            "保存修改", type="primary", width="stretch"
+        )
+
+    if not submitted:
+        return
+
+    try:
+        with st.spinner("正在保存修改…"):
+            repo.update_learned_dish(
+                dish,
+                name=name,
+                ingredients=ingredients,
+                editor=user,
+                image_bytes=photo.getvalue() if photo is not None else None,
+                filename=photo.name if photo is not None else "",
+                content_type=(photo.type or "") if photo is not None else "",
+            )
+            _load_learned_dishes(repo, force=True)
+        st.toast("菜品已更新", icon="✅")
+        st.rerun()
+    except (StorageError, ValueError) as exc:
+        st.error(str(exc))
 
 
 def _menu_view(
@@ -441,71 +527,95 @@ def _learned_dishes_view(
     day_count: int,
 ) -> None:
     st.subheader("已学会的菜")
-    st.markdown(
-        '<p class="subtle">像点外卖一样挑一道，安排到当前餐单。</p>',
-        unsafe_allow_html=True,
-    )
 
-    with st.expander("＋ 添加一道菜", expanded=not dishes):
-        with st.form("learned-dish-form", clear_on_submit=True):
-            name = st.text_input("菜名", max_chars=200, placeholder="例如：番茄炒蛋")
-            ingredients = st.text_input(
-                "常用食材（可选）",
-                max_chars=1000,
-                placeholder="例如：番茄、鸡蛋、葱",
+    with st.container(key="learned-dish-browser", width=680):
+        if dishes:
+            dishes_by_key = {
+                dish.page_id or f"legacy-dish-{index}": dish
+                for index, dish in enumerate(dishes)
+            }
+            selected_key = st.selectbox(
+                "选择菜品",
+                options=tuple(dishes_by_key),
+                format_func=lambda key: dishes_by_key[key].name,
+                key="learned-dish-picker",
             )
-            photo = st.file_uploader(
-                "菜品照片",
-                type=("jpg", "jpeg", "png", "webp"),
-                accept_multiple_files=False,
-                help="支持 JPG、PNG、WebP，最大 5 MB。",
-            )
-            submitted = st.form_submit_button(
-                "加入已学会的菜", type="primary", width="stretch"
-            )
-        if submitted:
-            if photo is None:
-                st.error("请选择一张菜品照片。")
-            else:
-                try:
-                    with st.spinner("正在保存这道菜…"):
-                        repo.save_learned_dish(
-                            name=name,
-                            ingredients=ingredients,
-                            image_bytes=photo.getvalue(),
-                            filename=photo.name,
-                            content_type=photo.type or "",
-                            editor=user,
-                        )
-                        _load_learned_dishes(repo, force=True)
-                    st.toast("已加入已学会的菜", icon="✅")
-                    st.rerun()
-                except (StorageError, ValueError) as exc:
-                    st.error(str(exc))
+            selected_dish = dishes_by_key[selected_key]
+            with st.container(key="learned-dish-preview", border=True):
+                photo_column, copy_column = st.columns(
+                    [1, 1.45], vertical_alignment="center", gap="small"
+                )
+                with photo_column:
+                    if selected_dish.image_url:
+                        st.image(selected_dish.image_url, width=220)
+                    else:
+                        st.markdown("### 🍲")
+                with copy_column:
+                    ingredient_copy = escape(
+                        selected_dish.ingredients or "还没有填写常用食材"
+                    )
+                    st.markdown(
+                        '<div class="dish-preview-copy">'
+                        f"<strong>{escape(selected_dish.name)}</strong>"
+                        f"<p>{ingredient_copy}</p></div>",
+                        unsafe_allow_html=True,
+                    )
 
-    if not dishes:
-        st.info("还没有保存过菜。上传第一张照片吧。")
-        return
-
-    st.markdown("### 可以点的菜")
-    columns = st.columns(2)
-    for index, dish in enumerate(dishes):
-        with columns[index % len(columns)]:
-            with st.container(border=True):
-                if dish.image_url:
-                    st.image(dish.image_url, width="stretch")
-                else:
-                    st.markdown("### 🍲")
-                st.markdown(f"**{escape(dish.name)}**")
-                if dish.ingredients:
-                    st.caption(dish.ingredients)
-                if st.button(
+                order_column, edit_column = st.columns(2, gap="small")
+                if order_column.button(
                     "点这道菜",
-                    key=f"order-learned-dish-{index}",
+                    key=f"order-learned-dish-{selected_key}",
                     type="primary",
                     width="stretch",
                 ):
-                    _order_learned_dish(repo, user, dish, start, day_count)
+                    _order_learned_dish(
+                        repo, user, selected_dish, start, day_count
+                    )
+                if edit_column.button(
+                    "编辑",
+                    key=f"edit-learned-dish-{selected_key}",
+                    width="stretch",
+                ):
+                    _edit_learned_dish(repo, user, selected_dish)
+
+        with st.expander("＋ 添加一道菜", expanded=not dishes):
+            with st.form("learned-dish-form", clear_on_submit=True):
+                name = st.text_input(
+                    "菜名", max_chars=200, placeholder="例如：番茄炒蛋"
+                )
+                ingredients = st.text_input(
+                    "常用食材（可选）",
+                    max_chars=1000,
+                    placeholder="例如：番茄、鸡蛋、葱",
+                )
+                photo = st.file_uploader(
+                    "菜品照片",
+                    type=("jpg", "jpeg", "png", "webp"),
+                    accept_multiple_files=False,
+                    help="支持 JPG、PNG、WebP，最大 5 MB。",
+                )
+                submitted = st.form_submit_button(
+                    "加入已学会的菜", type="primary", width="stretch"
+                )
+            if submitted:
+                if photo is None:
+                    st.error("请选择一张菜品照片。")
+                else:
+                    try:
+                        with st.spinner("正在保存这道菜…"):
+                            repo.save_learned_dish(
+                                name=name,
+                                ingredients=ingredients,
+                                image_bytes=photo.getvalue(),
+                                filename=photo.name,
+                                content_type=photo.type or "",
+                                editor=user,
+                            )
+                            _load_learned_dishes(repo, force=True)
+                        st.toast("已加入已学会的菜", icon="✅")
+                        st.rerun()
+                    except (StorageError, ValueError) as exc:
+                        st.error(str(exc))
 
 
 def _grocery_view() -> None:

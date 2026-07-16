@@ -103,6 +103,86 @@ class StorageTests(unittest.TestCase):
             {"type": "file_upload", "file_upload": {"id": "upload-id"}},
         )
 
+    def test_update_learned_dish_keeps_existing_photo_when_no_new_photo(self):
+        repo = NotionMealRepository("token", data_source_id="source-id")
+        repo._upload_file = Mock()
+        repo._request = Mock(
+            return_value={
+                "id": "dish-page-id",
+                "last_edited_time": "2026-07-16T13:00:00Z",
+            }
+        )
+        original = _page_to_learned_dish(
+            {
+                "id": "dish-page-id",
+                "properties": {
+                    "学会的菜": {"checkbox": True},
+                    "菜品": {"rich_text": [{"plain_text": "番茄炒蛋"}]},
+                    "食材": {"rich_text": [{"plain_text": "番茄、鸡蛋"}]},
+                    "菜品照片": {
+                        "files": [
+                            {
+                                "type": "file",
+                                "file": {"url": "https://example.com/old.jpg"},
+                            }
+                        ]
+                    },
+                },
+            }
+        )
+
+        updated = repo.update_learned_dish(
+            original,
+            name="番茄炒蛋",
+            ingredients="番茄、鸡蛋、葱",
+            editor="Eva",
+        )
+
+        method, path = repo._request.call_args.args
+        properties = repo._request.call_args.kwargs["json"]["properties"]
+        self.assertEqual((method, path), ("PATCH", "/pages/dish-page-id"))
+        self.assertNotIn(LEARNED_DISH_IMAGE, properties)
+        self.assertEqual(updated.image_url, "https://example.com/old.jpg")
+        repo._upload_file.assert_not_called()
+
+    def test_update_learned_dish_replaces_photo_only_when_selected(self):
+        repo = NotionMealRepository("token", data_source_id="source-id")
+        repo._upload_file = Mock(return_value="replacement-upload-id")
+        repo._request = Mock(
+            return_value={
+                "id": "dish-page-id",
+                "last_edited_time": "2026-07-16T13:00:00Z",
+            }
+        )
+        dish = _page_to_learned_dish(
+            {
+                "id": "dish-page-id",
+                "properties": {
+                    "学会的菜": {"checkbox": True},
+                    "菜品": {"rich_text": [{"plain_text": "红烧肉"}]},
+                },
+            }
+        )
+
+        repo.update_learned_dish(
+            dish,
+            name="红烧肉",
+            ingredients="五花肉、冰糖",
+            editor="Heng",
+            image_bytes=b"new-image",
+            filename="new.jpg",
+            content_type="image/jpeg",
+        )
+
+        properties = repo._request.call_args.kwargs["json"]["properties"]
+        self.assertEqual(
+            properties[LEARNED_DISH_IMAGE]["files"][0],
+            {
+                "type": "file_upload",
+                "file_upload": {"id": "replacement-upload-id"},
+            },
+        )
+
     def test_learned_dish_schema_adds_only_missing_catalog_fields(self):
         repo = NotionMealRepository("token", data_source_id="source-id")
         repo._request = Mock(
