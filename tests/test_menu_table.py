@@ -1,8 +1,8 @@
 import unittest
 from datetime import date, timedelta
 
-from caipu.menu_table import build_menu_rows, changed_meals
-from caipu.models import MEAL_SLOTS, Meal
+from caipu.menu_table import build_menu_rows, changed_meals, ordered_meal
+from caipu.models import LearnedDish, MEAL_SLOTS, Meal
 from caipu.storage import empty_week
 
 
@@ -10,7 +10,7 @@ class MenuTableTests(unittest.TestCase):
     def setUp(self):
         self.start = date(2026, 7, 3)
         self.days = [self.start + timedelta(days=offset) for offset in range(7)]
-        self.meals = empty_week(self.start)
+        self.meals = empty_week(self.start, days=7)
         self.labels = {day: day.isoformat() for day in self.days}
         self.people = {
             "Eva": "🟣 Eva",
@@ -54,6 +54,50 @@ class MenuTableTests(unittest.TestCase):
         rows = build_menu_rows(self.meals, self.days, self.labels, self.people)
 
         self.assertEqual(changed_meals(rows, self.meals, "强尼"), [])
+
+    def test_picking_a_learned_dish_fills_name_and_saved_ingredients(self):
+        learned = {"番茄炒蛋": "番茄、鸡蛋、葱"}
+        rows = build_menu_rows(
+            self.meals,
+            self.days,
+            self.labels,
+            self.people,
+            learned_dish_names=learned,
+        )
+        rows[0]["已学会"] = "番茄炒蛋"
+
+        changes = changed_meals(
+            rows,
+            self.meals,
+            "Eva",
+            learned_ingredients=learned,
+        )
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].dish, "番茄炒蛋")
+        self.assertEqual(changes[0].ingredients, "番茄、鸡蛋、葱")
+        self.assertEqual(changes[0].suggested_by, "Eva")
+
+    def test_ordering_a_learned_dish_replaces_the_slot_and_preserves_page(self):
+        original = Meal(
+            day=self.start,
+            slot=MEAL_SLOTS[2],
+            dish="旧菜",
+            ingredients="旧食材",
+            stocked=True,
+            note="旧备注",
+            page_id="meal-page-id",
+        )
+        dish = LearnedDish(name="红烧肉", ingredients="五花肉、冰糖")
+
+        result = ordered_meal(original, dish, "Heng")
+
+        self.assertEqual(result.dish, "红烧肉")
+        self.assertEqual(result.ingredients, "五花肉、冰糖")
+        self.assertEqual(result.suggested_by, "Heng")
+        self.assertFalse(result.stocked)
+        self.assertEqual(result.note, "")
+        self.assertEqual(result.page_id, "meal-page-id")
 
 
 if __name__ == "__main__":

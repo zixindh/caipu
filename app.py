@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from html import escape
 
 import streamlit as st
 
 from caipu.dates import (
+    DEFAULT_VISIBLE_DAYS,
+    MAX_VISIBLE_DAYS,
     day_label,
     full_day_label,
     rolling_days,
@@ -15,11 +17,17 @@ from caipu.dates import (
 )
 from caipu.groceries import grocery_items
 from caipu.history import group_history
-from caipu.menu_table import build_menu_rows, changed_meals, records_from_editor
+from caipu.menu_table import (
+    build_menu_rows,
+    changed_meals,
+    ordered_meal,
+    records_from_editor,
+)
+from caipu.models import LearnedDish, MealSlot
 from caipu.storage import NotionMealRepository, StorageError, empty_week
 
 st.set_page_config(
-    page_title="我们的七日餐桌",
+    page_title="我们的餐桌",
     page_icon="💗",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -75,9 +83,9 @@ def _inject_style() -> None:
           --muted: #806d74;
           --line: #f0dfe3;
           --paper: #fffaf9;
-          --accent: #c95872;
-          --accent-deep: #a93f59;
-          --soft: #fff0f3;
+          --accent: #ed5a48;
+          --accent-deep: #cf4436;
+          --soft: #fff0ed;
         }
         .stApp { background: var(--paper); color: var(--ink); }
         [data-testid="stHeader"] { background: rgba(255,250,249,.9); }
@@ -121,8 +129,10 @@ def _inject_style() -> None:
         div[data-testid="stDataFrame"] { font-size: .82rem; }
         .stButton > button, .stFormSubmitButton > button {
           min-height: 2.8rem; border-radius: 999px; font-weight: 650;
-          border-color: var(--line);
+          border-color: var(--line); transition: transform .16s ease,
+          background-color .16s ease, box-shadow .16s ease;
         }
+        .stButton > button:hover { transform: translateY(-1px); }
         .stFormSubmitButton > button[kind="primary"],
         .stButton > button[kind="primary"] {
           background: var(--accent); color: white; border: 0;
@@ -134,6 +144,22 @@ def _inject_style() -> None:
         @keyframes heart-in {
           from { opacity:0; transform:translateY(3px) scale(.8); }
           to { opacity:1; transform:translateY(0) scale(1); }
+        }
+        div[data-testid="stImage"] img {
+          border-radius: 18px; aspect-ratio: 4 / 3; object-fit: cover;
+          animation: dish-in .28s ease-out both;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+          border-radius: 22px; overflow: hidden;
+          transition: transform .18s ease, box-shadow .18s ease;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 30px rgba(96, 45, 39, .08);
+        }
+        @keyframes dish-in {
+          from { opacity: 0; transform: translateY(5px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         .grocery-row {
           display:flex; justify-content:space-between; align-items:center;
@@ -166,7 +192,7 @@ def _login() -> bool:
         return True
 
     st.markdown(
-        '<div class="brand"><span class="brand-heart">♥</span>我们的七日餐桌</div>',
+        '<div class="brand"><span class="brand-heart">♥</span>我们的餐桌</div>',
         unsafe_allow_html=True,
     )
     st.title("今天是谁来写菜单？")
@@ -190,19 +216,25 @@ def _login() -> bool:
     return False
 
 
-def _load_meals(repo: NotionMealRepository, start, force: bool = False) -> None:
+def _load_meals(
+    repo: NotionMealRepository,
+    start,
+    day_count: int = DEFAULT_VISIBLE_DAYS,
+    force: bool = False,
+) -> None:
+    range_key = f"{start.isoformat()}:{day_count}"
     if (
         not force
-        and st.session_state.get("week_start") == start.isoformat()
+        and st.session_state.get("meal_range") == range_key
         and "meals" in st.session_state
     ):
         return
-    end = rolling_days(start)[-1]
+    end = rolling_days(start, day_count)[-1]
     remote = repo.load_week(start, end)
-    meals = empty_week(start)
+    meals = empty_week(start, day_count)
     meals.update(remote)
     st.session_state.meals = meals
-    st.session_state.week_start = start.isoformat()
+    st.session_state.meal_range = range_key
 
 
 def _load_history(
@@ -221,8 +253,89 @@ def _load_history(
     st.session_state.history_range = range_key
 
 
-def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
-    days = rolling_days(start)
+def _load_learned_dishes(
+    repo: NotionMealRepository, force: bool = False
+) -> list[LearnedDish]:
+    loaded_at = st.session_state.get("learned_dishes_loaded_at")
+    stale = not isinstance(loaded_at, datetime) or (
+        datetime.now(timezone.utc) - loaded_at >= timedelta(minutes=50)
+    )
+    if force or stale or "learned_dishes" not in st.session_state:
+        st.session_state.learned_dishes = repo.load_learned_dishes()
+        st.session_state.learned_dishes_loaded_at = datetime.now(timezone.utc)
+    return st.session_state.learned_dishes
+
+
+@st.dialog("点这道菜")
+def _order_learned_dish(
+    repo: NotionMealRepository,
+    user: str,
+    dish: LearnedDish,
+    start,
+    day_count: int,
+) -> None:
+    if dish.image_url:
+        st.image(dish.image_url, width="stretch")
+    st.subheader(dish.name)
+    if dish.ingredients:
+        st.caption(f"常用食材：{dish.ingredients}")
+
+    days = rolling_days(start, day_count)
+    selected_day = st.selectbox(
+        "哪天吃",
+        days,
+        format_func=lambda day: day_label(day, start),
+    )
+    slot_name = st.segmented_control(
+        "安排在哪一餐",
+        tuple(slot.value for slot in MealSlot),
+        default=MealSlot.DINNER.value,
+        selection_mode="single",
+    )
+    if slot_name is None:
+        return
+    slot = MealSlot(slot_name)
+    original = st.session_state.meals[f"{selected_day.isoformat()}:{slot.value}"]
+    if original.dish.strip() and original.dish.strip() != dish.name:
+        st.warning(f"这里已经有“{original.dish}”，确认后会替换。")
+
+    if st.button("确认放进餐单", type="primary", width="stretch"):
+        meal = ordered_meal(original, dish, user)
+        try:
+            with st.spinner("正在安排…"):
+                saved = repo.save(meal, user)
+                st.session_state.meals[saved.key] = saved
+                st.session_state.menu_table_version = (
+                    st.session_state.get("menu_table_version", 0) + 1
+                )
+                st.session_state.pop("history_range", None)
+            st.toast("已经放进餐单", icon="✓")
+            st.rerun()
+        except StorageError as exc:
+            st.error(str(exc))
+
+
+def _menu_view(
+    repo: NotionMealRepository,
+    start,
+    user: str,
+    learned_dishes: list[LearnedDish],
+    day_count: int,
+) -> None:
+    control, _ = st.columns([1, 4], vertical_alignment="bottom")
+    with control:
+        selected_day_count = st.selectbox(
+            "显示天数",
+            options=tuple(range(1, MAX_VISIBLE_DAYS + 1)),
+            index=day_count - 1,
+            format_func=lambda value: f"{value} 天",
+            key="visible-days-control",
+        )
+    if selected_day_count != day_count:
+        st.session_state.visible_days = selected_day_count
+        st.rerun()
+
+    days = rolling_days(start, day_count)
     meals = st.session_state.meals
     legend = "".join(
         f'<span class="person-badge" style="color:{style["color"]};'
@@ -235,43 +348,72 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
     person_labels = {
         name: f"{style['dot']} {name}" for name, style in USER_STYLES.items()
     }
-    rows = build_menu_rows(meals, days, labels, person_labels)
+    learned_ingredients = {
+        dish.name: dish.ingredients for dish in learned_dishes
+    }
+    learned_names = list(learned_ingredients)
+    rows = build_menu_rows(
+        meals, days, labels, person_labels, learned_dish_names=learned_names
+    )
     table_version = st.session_state.get("menu_table_version", 0)
+    column_order = (
+        "日期",
+        "餐次",
+        *(("已学会",) if learned_names else ()),
+        "菜品",
+        "食材",
+        "已备齐",
+        "提议",
+        "备注",
+    )
+    column_config = {
+        "日期": st.column_config.TextColumn("日期", width=None, disabled=True),
+        "餐次": st.column_config.TextColumn("餐次", width=58, disabled=True),
+        "菜品": st.column_config.TextColumn("想吃什么", width=110, max_chars=200),
+        "食材": st.column_config.TextColumn(
+            "需要的食材",
+            width=160,
+            help="用逗号分隔，采购清单会自动汇总。",
+            max_chars=1000,
+        ),
+        "已备齐": st.column_config.CheckboxColumn(
+            "已备齐",
+            width=70,
+            help="食材已购买或冰箱已有",
+        ),
+        "提议": st.column_config.TextColumn(
+            "提议",
+            width="small",
+            help="根据最后修改者自动标记",
+            disabled=True,
+        ),
+        "备注": st.column_config.TextColumn("备注", width="medium", max_chars=300),
+    }
+    if learned_names:
+        column_config["已学会"] = st.column_config.SelectboxColumn(
+            "已学会的菜",
+            options=[""] + learned_names,
+            width=105,
+            help="从上传过照片的菜里选择",
+        )
     edited = st.data_editor(
         rows,
         width="stretch",
         height="content",
         row_height=68,
         hide_index=True,
-        column_order=("日期", "餐次", "菜品", "食材", "已备齐", "提议", "备注"),
-        column_config={
-            "日期": st.column_config.TextColumn("日期", width=None, disabled=True),
-            "餐次": st.column_config.TextColumn("餐次", width=58, disabled=True),
-            "菜品": st.column_config.TextColumn("想吃什么", width=110, max_chars=200),
-            "食材": st.column_config.TextColumn(
-                "需要的食材",
-                width=160,
-                help="用逗号分隔，采购清单会自动汇总。",
-                max_chars=1000,
-            ),
-            "已备齐": st.column_config.CheckboxColumn(
-                "已备齐",
-                width=70,
-                help="食材已购买或冰箱已有",
-            ),
-            "提议": st.column_config.TextColumn(
-                "提议",
-                width="small",
-                help="根据最后修改者自动标记",
-                disabled=True,
-            ),
-            "备注": st.column_config.TextColumn("备注", width="medium", max_chars=300),
-        },
+        column_order=column_order,
+        column_config=column_config,
         num_rows="fixed",
         disabled=("日期", "餐次", "提议"),
-        key=f"menu-table-{start.isoformat()}-{table_version}",
+        key=f"menu-table-{start.isoformat()}-{day_count}-{table_version}",
     )
-    changes = changed_meals(records_from_editor(edited), meals, user)
+    changes = changed_meals(
+        records_from_editor(edited),
+        meals,
+        user,
+        learned_ingredients=learned_ingredients,
+    )
     if changes:
         saved_count = 0
         try:
@@ -289,6 +431,81 @@ def _menu_view(repo: NotionMealRepository, start, user: str) -> None:
                 f"自动保存失败。已完成 {saved_count} 处，未保存的内容仍留在表格中。"
                 f"{exc}"
             )
+
+
+def _learned_dishes_view(
+    repo: NotionMealRepository,
+    user: str,
+    dishes: list[LearnedDish],
+    start,
+    day_count: int,
+) -> None:
+    st.subheader("已学会的菜")
+    st.markdown(
+        '<p class="subtle">像点外卖一样挑一道，安排到当前餐单。</p>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("＋ 添加一道菜", expanded=not dishes):
+        with st.form("learned-dish-form", clear_on_submit=True):
+            name = st.text_input("菜名", max_chars=200, placeholder="例如：番茄炒蛋")
+            ingredients = st.text_input(
+                "常用食材（可选）",
+                max_chars=1000,
+                placeholder="例如：番茄、鸡蛋、葱",
+            )
+            photo = st.file_uploader(
+                "菜品照片",
+                type=("jpg", "jpeg", "png", "webp"),
+                accept_multiple_files=False,
+                help="支持 JPG、PNG、WebP，最大 5 MB。",
+            )
+            submitted = st.form_submit_button(
+                "加入已学会的菜", type="primary", width="stretch"
+            )
+        if submitted:
+            if photo is None:
+                st.error("请选择一张菜品照片。")
+            else:
+                try:
+                    with st.spinner("正在保存这道菜…"):
+                        repo.save_learned_dish(
+                            name=name,
+                            ingredients=ingredients,
+                            image_bytes=photo.getvalue(),
+                            filename=photo.name,
+                            content_type=photo.type or "",
+                            editor=user,
+                        )
+                        _load_learned_dishes(repo, force=True)
+                    st.toast("已加入已学会的菜", icon="✓")
+                    st.rerun()
+                except (StorageError, ValueError) as exc:
+                    st.error(str(exc))
+
+    if not dishes:
+        st.info("还没有保存过菜。上传第一张照片吧。")
+        return
+
+    st.markdown("### 可以点的菜")
+    columns = st.columns(2)
+    for index, dish in enumerate(dishes):
+        with columns[index % len(columns)]:
+            with st.container(border=True):
+                if dish.image_url:
+                    st.image(dish.image_url, width="stretch")
+                else:
+                    st.markdown("### 🍲")
+                st.markdown(f"**{escape(dish.name)}**")
+                if dish.ingredients:
+                    st.caption(dish.ingredients)
+                if st.button(
+                    "点这道菜",
+                    key=f"order-learned-dish-{index}",
+                    type="primary",
+                    width="stretch",
+                ):
+                    _order_learned_dish(repo, user, dish, start, day_count)
 
 
 def _grocery_view() -> None:
@@ -374,27 +591,42 @@ def main() -> None:
 
     user = st.session_state.user
     today = today_in_china()
+    day_count = max(
+        1,
+        min(
+            MAX_VISIBLE_DAYS,
+            int(st.session_state.get("visible_days", DEFAULT_VISIBLE_DAYS)),
+        ),
+    )
     try:
         with st.spinner("正在打开共享餐单…"):
-            _load_meals(repo, today)
+            _load_meals(repo, today, day_count)
     except (StorageError, ValueError) as exc:
         st.error(str(exc))
         st.info("请检查 NOTION_TOKEN 和 NOTION_PAGE_ID，然后重新启动应用。")
         return
 
+    learned_dishes_error = ""
+    try:
+        learned_dishes = _load_learned_dishes(repo)
+    except StorageError as exc:
+        learned_dishes = []
+        learned_dishes_error = str(exc)
+
     top_left, top_right = st.columns([5, 2], vertical_alignment="bottom")
     with top_left:
         st.markdown(
-            '<div class="brand"><span class="brand-heart">♥</span>我们的七日餐桌</div>',
+            '<div class="brand"><span class="brand-heart">♥</span>我们的餐桌</div>',
             unsafe_allow_html=True,
         )
-        st.title("未来七天，一起好好吃饭")
+        st.title("接下来几天，一起好好吃饭")
     with top_right:
         a, b = st.columns(2)
         if a.button("刷新", width="stretch", help="从 Notion 获取家人的最新修改"):
             try:
                 with st.spinner("正在同步…"):
-                    _load_meals(repo, today, force=True)
+                    _load_meals(repo, today, day_count, force=True)
+                    _load_learned_dishes(repo, force=True)
                     st.session_state.pop("history_range", None)
                 st.toast("已获取最新餐单", icon="✓")
                 st.rerun()
@@ -407,16 +639,20 @@ def main() -> None:
 
     section = st.segmented_control(
         "页面",
-        ("本周餐单", "往期灵感", "采购清单"),
-        default="本周餐单",
+        ("餐单", "已学会的菜", "往期", "采购"),
+        default="餐单",
         selection_mode="single",
         label_visibility="collapsed",
         key="main-section",
     )
     st.write("")
-    if section == "本周餐单":
-        _menu_view(repo, today, user)
-    elif section == "往期灵感":
+    if learned_dishes_error:
+        st.warning(f"“已学会的菜”暂时无法读取：{learned_dishes_error}")
+    if section == "餐单":
+        _menu_view(repo, today, user, learned_dishes, day_count)
+    elif section == "已学会的菜":
+        _learned_dishes_view(repo, user, learned_dishes, today, day_count)
+    elif section == "往期":
         _history_view(repo, today)
     else:
         _grocery_view()

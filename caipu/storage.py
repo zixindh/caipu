@@ -5,11 +5,20 @@ from typing import Any
 
 import requests
 
-from caipu.models import MEAL_SLOTS, Meal, MealSlot
+from caipu.dates import DEFAULT_VISIBLE_DAYS
+from caipu.models import LearnedDish, MEAL_SLOTS, Meal, MealSlot
 
 API_BASE = "https://api.notion.com/v1"
 API_VERSION = "2026-03-11"
 DATABASE_TITLE = "七日餐单 · Caipu"
+LEARNED_DISH_FLAG = "学会的菜"
+LEARNED_DISH_IMAGE = "菜品照片"
+MAX_DISH_IMAGE_BYTES = 5 * 1024 * 1024
+ALLOWED_DISH_IMAGE_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
 
 
 class StorageError(RuntimeError):
@@ -37,7 +46,6 @@ class NotionMealRepository:
             {
                 "Authorization": f"Bearer {token}",
                 "Notion-Version": API_VERSION,
-                "Content-Type": "application/json",
             }
         )
 
@@ -54,7 +62,7 @@ class NotionMealRepository:
         payload = {
             "parent": {"type": "page_id", "page_id": self.parent_page_id},
             "title": [_text(DATABASE_TITLE)],
-            "description": [_text("由七日食谱应用自动维护，请勿删除或重命名字段。")],
+            "description": [_text("由共享餐桌应用自动维护，请勿删除或重命名字段。")],
             "is_inline": False,
             "icon": {"type": "emoji", "emoji": "🍲"},
             "initial_data_source": {"properties": _schema()},
@@ -124,8 +132,159 @@ class NotionMealRepository:
             )
         return meal.with_page(response["id"], response.get("last_edited_time"))
 
+    def load_learned_dishes(self) -> list[LearnedDish]:
+        source_id = self._ensure_learned_dish_schema()
+        payload: dict[str, Any] = {
+            "filter": {
+                "property": LEARNED_DISH_FLAG,
+                "checkbox": {"equals": True},
+            },
+            "sorts": [{"timestamp": "last_edited_time", "direction": "descending"}],
+            "page_size": 100,
+        }
+        pages: list[dict[str, Any]] = []
+        while True:
+            response = self._request(
+                "POST", f"/data_sources/{source_id}/query", json=payload
+            )
+            pages.extend(response.get("results", []))
+            if not response.get("has_more"):
+                break
+            payload["start_cursor"] = response["next_cursor"]
+
+        dishes: dict[str, LearnedDish] = {}
+        for page in pages:
+            dish = _page_to_learned_dish(page)
+            if dish is None:
+                continue
+            key = dish.name.casefold()
+            previous = dishes.get(key)
+            if previous is None or (dish.last_edited_time or "") > (
+                previous.last_edited_time or ""
+            ):
+                dishes[key] = dish
+        return sorted(dishes.values(), key=lambda dish: dish.name.casefold())
+
+    def save_learned_dish(
+        self,
+        *,
+        name: str,
+        ingredients: str,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str,
+        editor: str,
+    ) -> LearnedDish:
+        name = name.strip()
+        ingredients = ingredients.strip()
+        content_type = content_type.lower().strip()
+        if not name:
+            raise ValueError("请填写菜名。")
+        if not image_bytes:
+            raise ValueError("请选择一张菜品照片。")
+        if len(image_bytes) > MAX_DISH_IMAGE_BYTES:
+            raise ValueError("照片不能超过 5 MB。")
+        if content_type not in ALLOWED_DISH_IMAGE_TYPES:
+            raise ValueError("照片仅支持 JPG、PNG 或 WebP。")
+
+        source_id = self._ensure_learned_dish_schema()
+        upload_id = self._upload_file(
+            image_bytes=image_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+        properties = {
+            "餐次": {"title": [_text(f"已学会 · {name}")]},
+            "菜品": {"rich_text": _rich_text(name)},
+            "食材": {"rich_text": _rich_text(ingredients)},
+            LEARNED_DISH_FLAG: {"checkbox": True},
+            LEARNED_DISH_IMAGE: {
+                "files": [
+                    {
+                        "type": "file_upload",
+                        "file_upload": {"id": upload_id},
+                    }
+                ]
+            },
+            "更新者": {"rich_text": [_text(editor)]},
+        }
+        page_id = self._find_learned_dish_page(name)
+        if page_id:
+            response = self._request(
+                "PATCH", f"/pages/{page_id}", json={"properties": properties}
+            )
+        else:
+            response = self._request(
+                "POST",
+                "/pages",
+                json={
+                    "parent": {
+                        "type": "data_source_id",
+                        "data_source_id": source_id,
+                    },
+                    "properties": properties,
+                },
+            )
+        return LearnedDish(
+            name=name,
+            ingredients=ingredients,
+            added_by=editor,
+            page_id=response["id"],
+            last_edited_time=response.get("last_edited_time"),
+        )
+
+    def _ensure_learned_dish_schema(self) -> str:
+        source_id = self.data_source_id or self.ensure_ready()
+        source = self._request("GET", f"/data_sources/{source_id}")
+        properties = source.get("properties", {})
+        required = {
+            LEARNED_DISH_FLAG: "checkbox",
+            LEARNED_DISH_IMAGE: "files",
+        }
+        additions: dict[str, Any] = {}
+        for name, expected_type in required.items():
+            existing = properties.get(name)
+            if existing is None:
+                additions[name] = {expected_type: {}}
+            elif existing.get("type") != expected_type:
+                raise StorageError(
+                    f'Notion 字段“{name}”类型不正确，请将它改为 {expected_type}。'
+                )
+        if additions:
+            self._request(
+                "PATCH",
+                f"/data_sources/{source_id}",
+                json={"properties": additions},
+            )
+        return source_id
+
+    def _upload_file(
+        self, *, image_bytes: bytes, filename: str, content_type: str
+    ) -> str:
+        safe_filename = _safe_filename(filename, content_type)
+        upload = self._request(
+            "POST",
+            "/file_uploads",
+            json={
+                "mode": "single_part",
+                "filename": safe_filename,
+                "content_type": content_type,
+            },
+        )
+        upload_id = upload.get("id")
+        if not upload_id:
+            raise StorageError("Notion 没有返回照片上传 ID，请重试。")
+        sent = self._request(
+            "POST",
+            f"/file_uploads/{upload_id}/send",
+            files={"file": (safe_filename, image_bytes, content_type)},
+        )
+        if sent.get("status") not in (None, "uploaded"):
+            raise StorageError("照片上传尚未完成，请重试。")
+        return str(upload_id)
+
     def _find_meal_page(self, meal: Meal) -> str | None:
-        """Avoid duplicate rows when another user created this meal after our refresh."""
+        """Avoid duplicates if another user created a meal after our refresh."""
         response = self._request(
             "POST",
             f"/data_sources/{self.data_source_id}/query",
@@ -139,6 +298,30 @@ class NotionMealRepository:
                         {
                             "property": "时段",
                             "select": {"equals": meal.slot.value},
+                        },
+                    ]
+                },
+                "sorts": [{"timestamp": "last_edited_time", "direction": "descending"}],
+                "page_size": 1,
+            },
+        )
+        pages = response.get("results", [])
+        return pages[0]["id"] if pages else None
+
+    def _find_learned_dish_page(self, name: str) -> str | None:
+        response = self._request(
+            "POST",
+            f"/data_sources/{self.data_source_id}/query",
+            json={
+                "filter": {
+                    "and": [
+                        {
+                            "property": LEARNED_DISH_FLAG,
+                            "checkbox": {"equals": True},
+                        },
+                        {
+                            "property": "菜品",
+                            "rich_text": {"equals": name},
                         },
                     ]
                 },
@@ -197,7 +380,7 @@ class NotionMealRepository:
         raise StorageError(message)
 
 
-def empty_week(start: date, days: int = 7) -> dict[str, Meal]:
+def empty_week(start: date, days: int = DEFAULT_VISIBLE_DAYS) -> dict[str, Meal]:
     from datetime import timedelta
 
     return {
@@ -234,6 +417,8 @@ def _schema() -> dict[str, Any]:
         },
         "备注": {"rich_text": {}},
         "更新者": {"rich_text": {}},
+        LEARNED_DISH_FLAG: {"checkbox": {}},
+        LEARNED_DISH_IMAGE: {"files": {}},
     }
 
 
@@ -275,6 +460,30 @@ def _page_to_meal(page: dict[str, Any]) -> Meal | None:
         return None
 
 
+def _page_to_learned_dish(page: dict[str, Any]) -> LearnedDish | None:
+    properties = page.get("properties", {})
+    if not properties.get(LEARNED_DISH_FLAG, {}).get("checkbox"):
+        return None
+    name = _property_text(properties.get("菜品", {}), "rich_text").strip()
+    if not name:
+        return None
+    image_url = ""
+    for file_value in properties.get(LEARNED_DISH_IMAGE, {}).get("files", []):
+        file_type = file_value.get("type")
+        if file_type in ("file", "external"):
+            image_url = (file_value.get(file_type) or {}).get("url", "")
+            if image_url:
+                break
+    return LearnedDish(
+        name=name,
+        ingredients=_property_text(properties.get("食材", {}), "rich_text"),
+        image_url=image_url,
+        added_by=_property_text(properties.get("更新者", {}), "rich_text"),
+        page_id=page.get("id"),
+        last_edited_time=page.get("last_edited_time"),
+    )
+
+
 def _text(value: str) -> dict[str, Any]:
     return {"type": "text", "text": {"content": value}}
 
@@ -293,3 +502,19 @@ def _property_text(prop: dict[str, Any], kind: str) -> str:
 
 def _clean_id(value: str | None) -> str:
     return (value or "").replace("-", "").strip()
+
+
+def _safe_filename(filename: str, content_type: str) -> str:
+    extension = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }[content_type]
+    stem = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = stem.rsplit(".", 1)[0].strip()
+    stem = "".join(
+        character
+        for character in stem
+        if character.isalnum() or character in ("-", "_", " ")
+    ).strip() or "dish"
+    return f"{stem[:120]}{extension}"

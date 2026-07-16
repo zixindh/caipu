@@ -40,3 +40,18 @@ class Meal:
 
     def with_page(self, page_id: str, last_edited_time: str | None = None) -> "Meal":
         return replace(self, page_id=page_id, last_edited_time=last_edited_time)
+
+
+@dataclass(frozen=True, slots=True)
+class LearnedDish:
+    name: str
+    ingredients: str = ""
+    image_url: str = ""
+    added_by: str = ""
+    page_id: str | None = None
+    last_edited_time: str | None = None
+
+    def with_page(
+        self, page_id: str, last_edited_time: str | None = None
+    ) -> "LearnedDish":
+        return replace(self, page_id=page_id, last_edited_time=last_edited_time)

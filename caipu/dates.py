@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 WEEKDAYS = "一二三四五六日"
 APP_TIMEZONE = ZoneInfo("Asia/Shanghai")
+DEFAULT_VISIBLE_DAYS = 2
+MAX_VISIBLE_DAYS = 14
 
 
 def today_in_china() -> date:
@@ -13,7 +15,7 @@ def today_in_china() -> date:
     return datetime.now(APP_TIMEZONE).date()
 
 
-def rolling_days(start: date, count: int = 7) -> list[date]:
+def rolling_days(start: date, count: int = DEFAULT_VISIBLE_DAYS) -> list[date]:
     return [start + timedelta(days=offset) for offset in range(count)]
 
 
