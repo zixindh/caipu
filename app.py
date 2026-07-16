@@ -309,7 +309,7 @@ def _order_learned_dish(
                     st.session_state.get("menu_table_version", 0) + 1
                 )
                 st.session_state.pop("history_range", None)
-            st.toast("已经放进餐单", icon="✓")
+            st.toast("已经放进餐单", icon="✅")
             st.rerun()
         except StorageError as exc:
             st.error(str(exc))
@@ -424,7 +424,7 @@ def _menu_view(
                     saved_count += 1
             st.session_state.menu_table_version = table_version + 1
             st.session_state.pop("history_range", None)
-            st.toast("已自动保存", icon="✓")
+            st.toast("已自动保存", icon="✅")
             st.rerun()
         except StorageError as exc:
             st.error(
@@ -478,7 +478,7 @@ def _learned_dishes_view(
                             editor=user,
                         )
                         _load_learned_dishes(repo, force=True)
-                    st.toast("已加入已学会的菜", icon="✓")
+                    st.toast("已加入已学会的菜", icon="✅")
                     st.rerun()
                 except (StorageError, ValueError) as exc:
                     st.error(str(exc))
@@ -628,7 +628,7 @@ def main() -> None:
                     _load_meals(repo, today, day_count, force=True)
                     _load_learned_dishes(repo, force=True)
                     st.session_state.pop("history_range", None)
-                st.toast("已获取最新餐单", icon="✓")
+                st.toast("已获取最新餐单", icon="✅")
                 st.rerun()
             except StorageError as exc:
                 st.error(str(exc))
