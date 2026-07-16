@@ -149,17 +149,28 @@ def _inject_style() -> None:
           border-radius: 18px; aspect-ratio: 4 / 3; object-fit: cover;
           animation: dish-in .28s ease-out both;
         }
-        .dish-preview-copy { padding:.15rem 0; }
-        .dish-preview-copy strong {
-          display:block; font-size:1.15rem; line-height:1.35; margin-bottom:.45rem;
+        .dish-row-copy { padding:.05rem 0; }
+        .dish-row-copy strong {
+          display:block; font-size:1rem; line-height:1.3; margin-bottom:.25rem;
         }
-        .dish-preview-copy p {
-          color:var(--muted); font-size:.88rem; line-height:1.5; margin:0;
-          display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+        .dish-row-copy p {
+          color:var(--muted); font-size:.8rem; line-height:1.4; margin:0;
+          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
           overflow:hidden;
         }
-        .st-key-learned-dish-preview div[data-testid="stImage"] img {
-          aspect-ratio:1 / 1; max-height:220px;
+        .st-key-learned-dish-browser div[data-testid="stImage"] img {
+          aspect-ratio:1 / 1; max-height:92px; border-radius:14px;
+        }
+        .st-key-learned-dish-browser div[data-testid="stVerticalBlockBorderWrapper"] {
+          border-radius:16px;
+        }
+        .st-key-learned-dish-browser div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+          transform:none; box-shadow:none;
+        }
+        .dish-thumb-placeholder {
+          display:grid; place-items:center; width:92px; max-width:100%;
+          aspect-ratio:1; border-radius:14px; background:var(--soft);
+          font-size:1.6rem;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] {
           border-radius: 22px; overflow: hidden;
@@ -205,18 +216,22 @@ def _inject_style() -> None:
           .st-key-learned-dish-browser [data-testid="stVerticalBlock"] {
             gap:.65rem;
           }
-          .st-key-learned-dish-preview [data-testid="stHorizontalBlock"] {
+          .st-key-learned-dish-browser [data-testid="stHorizontalBlock"] {
             gap:.65rem;
           }
-          .st-key-learned-dish-preview [data-testid="stColumn"] {
+          .st-key-learned-dish-browser [data-testid="stColumn"] {
             min-width:0;
           }
-          .st-key-learned-dish-preview div[data-testid="stImage"] img {
-            border-radius:14px; max-height:145px;
+          .st-key-learned-dish-browser div[data-testid="stImage"] img {
+            max-height:78px;
           }
-          .dish-preview-copy strong { font-size:1rem; margin-bottom:.25rem; }
-          .dish-preview-copy p {
-            font-size:.8rem; line-height:1.4; -webkit-line-clamp:3;
+          .dish-thumb-placeholder { width:78px; font-size:1.35rem; }
+          .dish-row-copy strong { font-size:.9rem; margin-bottom:.15rem; }
+          .dish-row-copy p {
+            font-size:.72rem; line-height:1.35; -webkit-line-clamp:2;
+          }
+          .st-key-learned-dish-browser .stButton > button {
+            min-height:2.35rem; padding-left:.35rem; padding-right:.35rem;
           }
         }
         </style>
@@ -528,55 +543,51 @@ def _learned_dishes_view(
 ) -> None:
     st.subheader("已学会的菜")
 
-    with st.container(key="learned-dish-browser", width=680):
+    with st.container(key="learned-dish-browser", width=680, gap="xsmall"):
         if dishes:
-            dishes_by_key = {
-                dish.page_id or f"legacy-dish-{index}": dish
-                for index, dish in enumerate(dishes)
-            }
-            selected_key = st.selectbox(
-                "选择菜品",
-                options=tuple(dishes_by_key),
-                format_func=lambda key: dishes_by_key[key].name,
-                key="learned-dish-picker",
-            )
-            selected_dish = dishes_by_key[selected_key]
-            with st.container(key="learned-dish-preview", border=True):
-                photo_column, copy_column = st.columns(
-                    [1, 1.45], vertical_alignment="center", gap="small"
-                )
-                with photo_column:
-                    if selected_dish.image_url:
-                        st.image(selected_dish.image_url, width=220)
-                    else:
-                        st.markdown("### 🍲")
-                with copy_column:
-                    ingredient_copy = escape(
-                        selected_dish.ingredients or "还没有填写常用食材"
-                    )
-                    st.markdown(
-                        '<div class="dish-preview-copy">'
-                        f"<strong>{escape(selected_dish.name)}</strong>"
-                        f"<p>{ingredient_copy}</p></div>",
-                        unsafe_allow_html=True,
-                    )
-
-                order_column, edit_column = st.columns(2, gap="small")
-                if order_column.button(
-                    "点这道菜",
-                    key=f"order-learned-dish-{selected_key}",
-                    type="primary",
-                    width="stretch",
+            for index, dish in enumerate(dishes):
+                dish_key = dish.page_id or f"legacy-dish-{index}"
+                with st.container(
+                    key=f"learned-dish-row-{index}",
+                    border=True,
+                    gap="xsmall",
                 ):
-                    _order_learned_dish(
-                        repo, user, selected_dish, start, day_count
+                    photo_column, copy_column, action_column = st.columns(
+                        [0.78, 1.65, 0.8],
+                        vertical_alignment="center",
+                        gap="small",
                     )
-                if edit_column.button(
-                    "编辑",
-                    key=f"edit-learned-dish-{selected_key}",
-                    width="stretch",
-                ):
-                    _edit_learned_dish(repo, user, selected_dish)
+                    with photo_column:
+                        if dish.image_url:
+                            st.image(dish.image_url, width=96)
+                        else:
+                            st.markdown(
+                                '<div class="dish-thumb-placeholder">🍲</div>',
+                                unsafe_allow_html=True,
+                            )
+                    with copy_column:
+                        ingredient_copy = escape(
+                            dish.ingredients or "还没有填写常用食材"
+                        )
+                        st.markdown(
+                            '<div class="dish-row-copy">'
+                            f"<strong>{escape(dish.name)}</strong>"
+                            f"<p>{ingredient_copy}</p></div>",
+                            unsafe_allow_html=True,
+                        )
+                    if action_column.button(
+                        "点菜",
+                        key=f"order-learned-dish-{dish_key}",
+                        type="primary",
+                        width="stretch",
+                    ):
+                        _order_learned_dish(repo, user, dish, start, day_count)
+                    if action_column.button(
+                        "编辑",
+                        key=f"edit-learned-dish-{dish_key}",
+                        width="stretch",
+                    ):
+                        _edit_learned_dish(repo, user, dish)
 
         with st.expander("＋ 添加一道菜", expanded=not dishes):
             with st.form("learned-dish-form", clear_on_submit=True):
